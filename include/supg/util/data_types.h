@@ -9,6 +9,7 @@
 #include <climits>
 #include <vector>
 #include <array>
+#include <cstdint>
 
 namespace supg {
 

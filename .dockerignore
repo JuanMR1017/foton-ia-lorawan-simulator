@@ -1,0 +1,7 @@
+# Excluir build locales y .git para contexto pequeño
+build/
+bin/
+cmake-build-*/
+.git/
+.idea/
+*.o

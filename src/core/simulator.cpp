@@ -7,6 +7,9 @@
 #include <toml/toml.h>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
+#include <cstring>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 namespace supg {
 
@@ -232,13 +235,18 @@ void simulator::init() {
             gw->_gateway_id._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
         }
 
-        // Set network server
+        // Set network server (soporta IP y hostname DNS para Docker)
         gw->_server.sin_family = AF_INET;
         gw->_server.sin_port = htons(_config._network_server._port);
-        if (strcmp(_config._network_server._host.c_str(), default_ns_host) == 0) {
-            gw->_server.sin_addr.s_addr = INADDR_ANY;
-        } else {
-            inet_aton(_config._network_server._host.c_str(), &gw->_server.sin_addr);
+        const char* host = _config._network_server._host.c_str();
+        if (strcmp(host, default_ns_host) == 0) {
+            gw->_server.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        } else if (inet_aton(host, &gw->_server.sin_addr) == 0) {
+            struct hostent* he = gethostbyname(host);
+            if (!he || !he->h_addr_list[0]) {
+                throw std::runtime_error(std::string("Config: Cannot resolve host: ") + host);
+            }
+            memcpy(&gw->_server.sin_addr, he->h_addr_list[0], he->h_length);
         }
 
         // Set uplink RX info
@@ -257,7 +265,7 @@ void simulator::init() {
     auto dev_addr = from_hex_string_to<uint32_t>(_config._first_dev_addr);
     auto nwk_s_key_msb = from_hex_string_to<uint64_t>(_config._first_dev_nwk_s_key.substr(0, 16));
     auto nwk_s_key_lsb = from_hex_string_to<uint64_t>(_config._first_dev_nwk_s_key.substr(16, 16));
-    auto app_s_key_msb = from_hex_string_to<uint64_t>(_config._first_dev_nwk_s_key.substr(0, 16));
+    auto app_s_key_msb = from_hex_string_to<uint64_t>(_config._first_dev_app_s_key.substr(0, 16));
     auto app_s_key_lsb = from_hex_string_to<uint64_t>(_config._first_dev_app_s_key.substr(16, 16));
     for (int i = 0; i < _config._dev_count; ++i, ++dev_eui, ++dev_addr, ++nwk_s_key_lsb, ++app_s_key_lsb) {
         auto dev = std::make_shared<device>();
@@ -324,7 +332,7 @@ void simulator::init() {
         dev->_uplink_tx_info._modulation = gw::modulation::lora;
         dev->_uplink_tx_info._lora_modulation_info._bandwidth = _config._bandwidth;
         dev->_uplink_tx_info._lora_modulation_info._spreading_factor = _config._s_factor;
-        dev->_uplink_tx_info._lora_modulation_info._code_rate = "3/4";
+        dev->_uplink_tx_info._lora_modulation_info._code_rate = "4/5";
 
         // Set frame counter
         dev->_f_cnt_up = _config._f_cnt;

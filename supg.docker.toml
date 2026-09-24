@@ -1,0 +1,29 @@
+[general]
+log_level = 4
+
+[network_server]
+# En docker-compose de chirpstack-LSCR el servicio se llama "chirpstack-gateway-bridge"
+host = "chirpstack-gateway-bridge"
+port = 1700
+
+[simulator]
+duration = 60
+
+[simulator.device]
+first_eui = "0000000000000000"
+first_address = "00000000"
+first_network_session_key = "00000000000000000000000000000000"
+first_application_session_key = "00000000000000000000000000000000"
+count = 1
+uplink_interval = 10
+f_port = 10
+payload = "test_packet_1234"
+frequency = 915200000
+bandwidth = 125
+spreading_factor = 7
+f_cnt = 0
+
+[simulator.gateway]
+first_id = "0000000000000000"
+min_count = 1
+max_count = 1

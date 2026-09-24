@@ -1,0 +1,20 @@
+services:
+  supg:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: supg:latest
+    container_name: supg-standalone-1
+    volumes:
+      - ./supg.docker.toml:/etc/supg/supg.toml:ro
+    command: ["--config", "/etc/supg/supg.toml"]
+    restart: "no"
+    # Se une a la red que crea chirpstack-LSCR para resolver
+    # "chirpstack-gateway-bridge" por DNS y enviar UDP al 1700
+    networks:
+      - chirpstack-lscr_default
+
+networks:
+  chirpstack-lscr_default:
+    external: true
+    name: chirpstack-lscr_default
