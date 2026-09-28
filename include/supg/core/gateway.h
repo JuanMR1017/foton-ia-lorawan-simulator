@@ -34,6 +34,7 @@ private:
     std::vector<byte> generate_push_data_packet(const gw::uplink_frame& frame);
     std::vector<byte> generate_pull_data_packet();
     std::vector<byte> generate_tx_ack_packet(const gw::downlink_tx_ack& ack);
+    std::vector<byte> generate_stat_packet();
     bool is_push_ack(const byte* resp, size_t resp_len, const std::vector<byte>& packet);
     bool is_pull_ack(const byte* resp, size_t resp_len);
     bool is_pull_resp(const byte* resp, size_t resp_len);
@@ -50,6 +51,12 @@ private:
     bool _connected = false;
     bool _stopped = false;
     std::mutex _push_mutex;
+    uint32_t _rx_packets = 0;
+    uint32_t _rx_packets_ok = 0;
+    uint32_t _forwarded_packets = 0;
+    uint32_t _push_acks = 0;
+    uint32_t _downlink_packets = 0;
+    uint32_t _tx_packets = 0;
 };
 
 }

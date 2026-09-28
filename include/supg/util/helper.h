@@ -26,6 +26,7 @@ byte get_random_byte(byte min = BYTE_MIN, byte max = BYTE_MAX);
 
 // Get time related values
 std::string get_current_timestamp();
+std::string get_gateway_stat_timestamp();
 size_t get_time_since_epoch();
 
 // Encode to and decode from base64 format

@@ -53,10 +53,17 @@ void gateway::send_uplink_frame(gw::uplink_frame frame) {
 
     // Generate PUSH_DATA packet
     frame._rx_info = _uplink_rx_info;
+    _rx_packets++;
+
+    if (frame._rx_info._crc_status == gw::crc_status::crc_ok) {
+        _rx_packets_ok++;
+    }
     auto packet = generate_push_data_packet(frame);
 
     // Send PUSH_DATA packet
     sendto(_push_socket_fd, packet.data(), packet.size(), MSG_CONFIRM, (const sockaddr*)&_server, sizeof(_server));
+    _forwarded_packets++;
+
     spdlog::trace("GTW {}: Send PUSH_DATA packet", _gateway_id.string());
 
     // Handle PUSH_ACK packet
@@ -68,6 +75,7 @@ void gateway::send_uplink_frame(gw::uplink_frame frame) {
     if (resp_len > 0) {
         resp[resp_len] = '\0';
         if (is_push_ack(resp, resp_len, packet)) {
+            _push_acks++;
             spdlog::trace("GTW {}: Receive PUSH_ACK packet", _gateway_id.string());
         } else {
             spdlog::error("GTW {}: Receive invalid packet", _gateway_id.string());
@@ -85,6 +93,12 @@ void gateway::keep_alive() {
         // Send PULL_DATA packet
         sendto(_pull_socket_fd, packet.data(), packet.size(), MSG_CONFIRM, (const sockaddr*)&_server, sizeof(_server));
         spdlog::trace("GTW {}: Send PULL_DATA packet", _gateway_id.string());
+        // Generate and send STAT packet
+        auto stat_packet = generate_stat_packet();
+        sendto(_push_socket_fd, stat_packet.data(), stat_packet.size(), MSG_CONFIRM,
+               (const sockaddr*)&_server, sizeof(_server));
+        spdlog::trace("GTW {}: Send STAT packet", _gateway_id.string());
+
 
         // Wait for the next cycle
         std::this_thread::sleep_for(1s);
@@ -106,6 +120,7 @@ void gateway::handle_downlink_frame() {
             resp[resp_len] = '\0';
             if (is_pull_resp(resp, resp_len)) {
                 spdlog::trace("GTW {}: Receive PULL_RESP packet", _gateway_id.string());
+                _downlink_packets++;
 
                 // Handle PULL_RESP packet
                 gw::downlink_frame frame;
@@ -147,6 +162,7 @@ void gateway::send_downlink_tx_ack(gw::downlink_tx_ack ack) {
 
     // Send TX_ACK packet
     sendto(_pull_socket_fd, packet.data(), packet.size(), MSG_CONFIRM, (const sockaddr*)&_server, sizeof(_server));
+    _tx_packets++;
     spdlog::trace("GTW {}: Send TX_ACK packet", _gateway_id.string());
 }
 
@@ -192,6 +208,51 @@ std::vector<byte> gateway::generate_push_data_packet(const gw::uplink_frame& fra
     data.add("size", frame._phy_payload.size());
     data.add("data", base64_encode({frame._phy_payload.data(), frame._phy_payload.size()}));
     auto&& data_str = data.string();
+    std::copy(data_str.begin(), data_str.end(), std::back_inserter(packet));
+
+    // Return
+    return packet;
+}
+
+std::vector<byte> gateway::generate_stat_packet() {
+    std::vector<byte> packet;
+
+    // Set protocol version
+    packet.push_back(0x02);
+
+    // Set random token
+    packet.push_back(get_random_byte());
+    packet.push_back(get_random_byte());
+
+    // Set PUSH_DATA identifier
+    packet.push_back(0x00);
+
+    // Set gateway identifier
+    for (const auto& byte : _gateway_id._value) {
+        packet.push_back(byte);
+    }
+
+    // Calculate ACK ratio
+    double ackr = 0.0;
+    if (_forwarded_packets > 0) {
+        ackr = 100.0 * static_cast<double>(_push_acks) /
+               static_cast<double>(_forwarded_packets);
+    }
+
+    // Build STAT JSON
+    std::basic_stringstream<byte> data;
+    data << R"({"stat":{)";
+    data << R"("time":")" << get_gateway_stat_timestamp() << R"(",)";
+    data << R"("rxnb":)" << _rx_packets << ",";
+    data << R"("rxok":)" << _rx_packets_ok << ",";
+    data << R"("rxfw":)" << _forwarded_packets << ",";
+    data << R"("ackr":)" << ackr << ",";
+    data << R"("dwnb":)" << _downlink_packets << ",";
+    data << R"("txnb":)" << _tx_packets;
+    data << "}}";
+
+    auto data_str = data.str();
+    spdlog::debug("STAT JSON: {}", data_str);
     std::copy(data_str.begin(), data_str.end(), std::back_inserter(packet));
 
     // Return

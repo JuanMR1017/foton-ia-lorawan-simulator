@@ -21,6 +21,11 @@ std::string get_current_timestamp() {
     auto now = std::chrono::system_clock::now();
     return date::format("%FT%TZ", date::floor<std::chrono::microseconds>(now));
 }
+std::string get_gateway_stat_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    return date::format("%F %T UTC", date::floor<std::chrono::microseconds>(now));
+}
+
 
 size_t get_time_since_epoch() {
     auto now = std::chrono::system_clock::now();
