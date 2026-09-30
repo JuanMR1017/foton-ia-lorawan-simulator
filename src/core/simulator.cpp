@@ -32,9 +32,8 @@ void simulator::generate_config_file(const std::string& config_file) {
 
     ofs << "[simulator.device]" << '\n';
     ofs << "first_eui = " << R"(")" << _config._first_dev_eui << R"(")" << '\n';
-    ofs << "first_address = " << R"(")" << _config._first_dev_addr << R"(")" << '\n';
-    ofs << "first_network_session_key = " << R"(")" << _config._first_dev_nwk_s_key << R"(")" << '\n';
-    ofs << "first_application_session_key = " << R"(")" << _config._first_dev_app_s_key << R"(")" << '\n';
+    ofs << "first_join_eui = " << R"(")" << _config._first_join_eui << R"(")" << '\n';
+    ofs << "first_app_key = " << R"(")" << _config._first_app_key << R"(")" << '\n';
     ofs << "count = " << _config._dev_count << '\n';
     ofs << "uplink_interval = " << _config._uplink_interval << '\n';
     ofs << "f_port = " << _config._f_port << '\n';
@@ -123,25 +122,19 @@ void simulator::init() {
             throw std::runtime_error("Config: Invalid device EUI");
         }
     }
-    val = config.find("simulator.device.first_addr");
+    val = config.find("simulator.device.first_join_eui");
     if (val && val->is<std::string>()) {
-        _config._first_dev_addr = val->as<std::string>();
-        if (_config._first_dev_addr.size() != 16) {
-            throw std::runtime_error("Config: Invalid device address");
+        _config._first_join_eui = val->as<std::string>();
+        if (_config._first_join_eui.size() != 16) {
+            throw std::runtime_error("Config: Invalid Join EUI");
         }
     }
-    val = config.find("simulator.device.first_network_session_key");
+
+    val = config.find("simulator.device.first_app_key");
     if (val && val->is<std::string>()) {
-        _config._first_dev_nwk_s_key = val->as<std::string>();
-        if (_config._first_dev_nwk_s_key.size() != 32) {
-            throw std::runtime_error("Config: Invalid device network session key");
-        }
-    }
-    val = config.find("simulator.device.first_application_session_key");
-    if (val && val->is<std::string>()) {
-        _config._first_dev_app_s_key = val->as<std::string>();
-        if (_config._first_dev_app_s_key.size() != 32) {
-            throw std::runtime_error("Config: Invalid device application session key");
+        _config._first_app_key = val->as<std::string>();
+        if (_config._first_app_key.size() != 32) {
+            throw std::runtime_error("Config: Invalid AppKey");
         }
     }
     val = config.find("simulator.device.count");
@@ -250,7 +243,7 @@ void simulator::init() {
         }
 
         // Set uplink RX info
-        gw->_uplink_rx_info._rssi = 50;
+        gw->_uplink_rx_info._rssi = -50;
         gw->_uplink_rx_info._lora_snr = 5.5;
         gw->_uplink_rx_info._channel = 0;
         gw->_uplink_rx_info._rf_chain = 0;
@@ -262,12 +255,10 @@ void simulator::init() {
 
     // Initialize device list
     auto dev_eui = from_hex_string_to<uint64_t>(_config._first_dev_eui);
-    auto dev_addr = from_hex_string_to<uint32_t>(_config._first_dev_addr);
-    auto nwk_s_key_msb = from_hex_string_to<uint64_t>(_config._first_dev_nwk_s_key.substr(0, 16));
-    auto nwk_s_key_lsb = from_hex_string_to<uint64_t>(_config._first_dev_nwk_s_key.substr(16, 16));
-    auto app_s_key_msb = from_hex_string_to<uint64_t>(_config._first_dev_app_s_key.substr(0, 16));
-    auto app_s_key_lsb = from_hex_string_to<uint64_t>(_config._first_dev_app_s_key.substr(16, 16));
-    for (int i = 0; i < _config._dev_count; ++i, ++dev_eui, ++dev_addr, ++nwk_s_key_lsb, ++app_s_key_lsb) {
+    auto join_eui = from_hex_string_to<uint64_t>(_config._first_join_eui);
+    auto app_key_msb = from_hex_string_to<uint64_t>(_config._first_app_key.substr(0, 16));
+    auto app_key_lsb = from_hex_string_to<uint64_t>(_config._first_app_key.substr(16, 16));
+    for (int i = 0; i < _config._dev_count; ++i, ++dev_eui) {
         auto dev = std::make_shared<device>();
 
         // Set device EUI
@@ -275,33 +266,21 @@ void simulator::init() {
         for (int j = 0; j < 8; ++j) {
             dev->_dev_eui._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
         }
-
-        // Set device address
-        buf = to_hex_string(dev_addr);
-        for (int j = 0; j < 4; ++j) {
-            dev->_dev_addr._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
+       // Set Join EUI
+       buf = to_hex_string(join_eui);
+       for (int j = 0; j < 8; ++j) {
+           dev->_join_eui._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
+        }
+       // Set AppKey
+       buf = to_hex_string(app_key_msb);
+       for (int j = 0; j < 8; ++j) {
+           dev->_app_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
         }
 
-        // Set network session key
-        buf = to_hex_string(nwk_s_key_msb);
-        for (int j = 0; j < 8; ++j) {
-            dev->_nwk_s_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
+       buf = to_hex_string(app_key_lsb);
+       for (int j = 8; j < 16; ++j) {
+           dev->_app_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr((j - 8) << 1, 2)));
         }
-        buf = to_hex_string(nwk_s_key_lsb);
-        for (int j = 8; j < 16; ++j) {
-            dev->_nwk_s_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr((j - 8) << 1, 2)));
-        }
-
-        // Set application session key
-        buf = to_hex_string(app_s_key_msb);
-        for (int j = 0; j < 8; ++j) {
-            dev->_app_s_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr(j << 1, 2)));
-        }
-        buf = to_hex_string(app_s_key_lsb);
-        for (int j = 8; j < 16; ++j) {
-            dev->_app_s_key._value[j] = static_cast<byte>(from_hex_string_to<uint32_t>(buf.substr((j - 8) << 1, 2)));
-        }
-
         // Set uplink interval
         dev->_uplink_interval = _config._uplink_interval;
 

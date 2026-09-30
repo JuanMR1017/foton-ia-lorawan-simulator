@@ -59,6 +59,7 @@ void gateway::send_uplink_frame(gw::uplink_frame frame) {
         _rx_packets_ok++;
     }
     auto packet = generate_push_data_packet(frame);
+    spdlog::info("DEBUG PUSH token sent: {:02X} {:02X}", static_cast<unsigned char>(packet[1]), static_cast<unsigned char>(packet[2]));
 
     // Send PUSH_DATA packet
     sendto(_push_socket_fd, packet.data(), packet.size(), MSG_CONFIRM, (const sockaddr*)&_server, sizeof(_server));
@@ -69,6 +70,8 @@ void gateway::send_uplink_frame(gw::uplink_frame frame) {
     // Handle PUSH_ACK packet
     byte resp[1024];
     auto resp_len = timeout_recvfrom(_push_socket_fd, resp, 1024, _server, 4);
+        spdlog::info("DEBUG PUSH resp_len={}", resp_len);
+        if (resp_len > 0) { spdlog::info("DEBUG first bytes: {:02X} {:02X} {:02X} {:02X}", static_cast<unsigned char>(resp[0]), static_cast<unsigned char>(resp[1]), static_cast<unsigned char>(resp[2]), static_cast<unsigned char>(resp[3])); }
     if (_stopped) {
         return;
     }
@@ -95,10 +98,33 @@ void gateway::keep_alive() {
         spdlog::trace("GTW {}: Send PULL_DATA packet", _gateway_id.string());
         // Generate and send STAT packet
         auto stat_packet = generate_stat_packet();
-        sendto(_push_socket_fd, stat_packet.data(), stat_packet.size(), MSG_CONFIRM,
-               (const sockaddr*)&_server, sizeof(_server));
-        spdlog::trace("GTW {}: Send STAT packet", _gateway_id.string());
 
+{
+        std::lock_guard<std::mutex> lock{_push_mutex};
+
+        spdlog::info("DEBUG STAT token sent: {:02X} {:02X}",
+                 static_cast<unsigned char>(stat_packet[1]),
+                 static_cast<unsigned char>(stat_packet[2]));
+
+        sendto(_push_socket_fd,
+           stat_packet.data(),
+           stat_packet.size(),
+           MSG_CONFIRM,
+           (const sockaddr*)&_server,
+           sizeof(_server));
+
+        byte resp[1024];
+        auto resp_len = timeout_recvfrom(_push_socket_fd, resp, 1024, _server, 4);
+
+        if (resp_len > 0 && is_push_ack(resp, resp_len, stat_packet)) {
+          spdlog::info("DEBUG STAT_ACK matched: {:02X} {:02X}",
+                     static_cast<unsigned char>(resp[1]),
+                     static_cast<unsigned char>(resp[2]));
+    }   else {
+          spdlog::error("GTW {}: STAT PUSH_ACK invalid or timeout",
+                     _gateway_id.string());
+    }
+}
 
         // Wait for the next cycle
         std::this_thread::sleep_for(1s);
@@ -113,10 +139,18 @@ void gateway::handle_downlink_frame() {
         // Handle PULL_RESP / PULL_ACK packet
         byte resp[1024];
         auto resp_len = timeout_recvfrom(_pull_socket_fd, resp, 1024, _server, 16);
+        spdlog::info("DEBUG PULL resp_len={}", resp_len);
+        if (resp_len > 0) { spdlog::info("DEBUG first bytes: {:02X} {:02X} {:02X} {:02X}", static_cast<unsigned char>(resp[0]), static_cast<unsigned char>(resp[1]), static_cast<unsigned char>(resp[2]), static_cast<unsigned char>(resp[3])); }
         if (_stopped) {
             return;
         }
         if (resp_len > 0) {
+            spdlog::info("GTW {}: Received {} bytes from UDP", _gateway_id.string(), resp_len);
+
+            for (int i = 0; i < std::min((ssize_t)16, resp_len); ++i) {
+                spdlog::info("UDP byte[{}] = 0x{:02X}", i, static_cast<unsigned char>(resp[i]));
+            }
+
             resp[resp_len] = '\0';
             if (is_pull_resp(resp, resp_len)) {
                 spdlog::trace("GTW {}: Receive PULL_RESP packet", _gateway_id.string());
@@ -310,6 +344,7 @@ bool gateway::is_push_ack(const byte* resp, size_t resp_len, const std::vector<b
     if (resp_len != 4) {
         return false;
     }
+    spdlog::info("DEBUG PUSH_ACK compare: sent={:02X} {:02X}, received={:02X} {:02X}", static_cast<unsigned char>(packet[1]), static_cast<unsigned char>(packet[2]), static_cast<unsigned char>(resp[1]), static_cast<unsigned char>(resp[2]));
     if (resp[0] != 0x02 || resp[1] != packet[1] || resp[2] != packet[2] || resp[3] != 0x01) {
         return false;
     }
@@ -317,13 +352,19 @@ bool gateway::is_push_ack(const byte* resp, size_t resp_len, const std::vector<b
 }
 
 bool gateway::is_pull_ack(const byte* resp, size_t resp_len) {
+    spdlog::info("DEBUG PULL_ACK: len={}, byte0=0x{:02X}, byte3=0x{:02X}",
+                 resp_len,
+                 static_cast<unsigned char>(resp[0]),
+                 static_cast<unsigned char>(resp[3]));
+
     if (resp_len != 4) {
         return false;
     }
-    // TODO: Compare PULL_DATA and PULL_ACK token
+
     if (resp[0] != 0x02 || resp[3] != 0x04) {
         return false;
     }
+
     return true;
 }
 

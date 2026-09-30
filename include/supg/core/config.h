@@ -14,10 +14,9 @@ constexpr size_t default_ns_port = 1700;
 
 struct config {
     network_server _network_server{default_ns_host, default_ns_port};
-    std::string _first_dev_eui = "0000000000000000";
-    std::string _first_dev_addr = "00000000";
-    std::string _first_dev_nwk_s_key = "00000000000000000000000000000000";
-    std::string _first_dev_app_s_key = "00000000000000000000000000000000";
+    std::string _first_dev_eui = "0000000000000001";
+    std::string _first_join_eui = "0000000000000000";
+    std::string _first_app_key = "00000000000000000000000000000000";
     int _duration = 60;
     int _dev_count = 1;
     int _uplink_interval = 10;

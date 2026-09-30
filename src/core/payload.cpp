@@ -14,7 +14,7 @@
 namespace supg {
 namespace lora {
 
-std::vector<byte> eui64::marshal() {
+std::vector<byte> eui64::marshal() const {
     std::vector<byte> res{_value.rbegin(), _value.rend()};
     return res;
 }
@@ -45,11 +45,163 @@ std::vector<byte> data_payload::marshal() {
     return _data;
 }
 
+std::vector<byte> join_request_payload::marshal() const {
+    std::vector<byte> res;
+
+    // JoinEUI
+    auto bytes = _join_eui.marshal();
+    res.insert(res.end(), bytes.begin(), bytes.end());
+
+    // DevEUI
+    bytes = _dev_eui.marshal();
+    res.insert(res.end(), bytes.begin(), bytes.end());
+
+    // DevNonce (LSB first)
+    res.push_back(static_cast<byte>(_dev_nonce & 0xFF));
+    res.push_back(static_cast<byte>((_dev_nonce >> 8) & 0xFF));
+
+    return res;
+}
+
+std::vector<byte> join_accept_payload::marshal() const {
+    std::vector<byte> res;
+
+    // AppNonce: 3 bytes
+    res.insert(res.end(), _app_nonce.begin(), _app_nonce.end());
+
+    // NetID: 3 bytes
+    res.insert(res.end(), _net_id.begin(), _net_id.end());
+
+    // DevAddr: 4 bytes
+    auto dev_addr_bytes = _dev_addr.marshal();
+    res.insert(res.end(), dev_addr_bytes.begin(), dev_addr_bytes.end());
+
+    // DLSettings
+    res.push_back(static_cast<byte>(_dl_settings));
+
+    // RxDelay
+    res.push_back(static_cast<byte>(_rx_delay));
+
+    // CFList: optional 16 bytes
+    if (_has_cf_list) {
+        res.insert(res.end(), _cf_list.begin(), _cf_list.end());
+    }
+
+    return res;
+}
+
+void join_accept_payload::unmarshal(const std::vector<byte>& data) {
+    // Join Accept payload:
+    // AppNonce (3) + NetID (3) + DevAddr (4)
+    // + DLSettings (1) + RxDelay (1)
+    // Optional CFList (16)
+
+    if (data.size() != 12 && data.size() != 28) {
+        throw std::runtime_error(
+            "lora: invalid Join Accept payload size"
+        );
+    }
+
+    // AppNonce
+    for (int i = 0; i < 3; ++i) {
+        _app_nonce[i] = data[i];
+    }
+
+    // NetID
+    for (int i = 0; i < 3; ++i) {
+        _net_id[i] = data[3 + i];
+    }
+
+    // DevAddr
+    std::vector<byte> dev_addr_data{
+        data.begin() + 6,
+        data.begin() + 10
+    };
+    _dev_addr.unmarshal(dev_addr_data);
+
+    // DLSettings
+    _dl_settings = data[10];
+
+    // RxDelay
+    _rx_delay = data[11];
+
+    // Optional CFList
+    _has_cf_list = data.size() == 28;
+
+    if (_has_cf_list) {
+        for (int i = 0; i < 16; ++i) {
+            _cf_list[i] = data[12 + i];
+        }
+    }
+}
+
+mic phy_payload::calculate_join_request_mic(
+        const aes128key& app_key,
+        const join_request_payload& join_request) {
+
+    mic result{};
+
+    // MHDR for Join Request: MType = 000, Major = 00
+    const byte mhdr = 0x00;
+
+    // Join Request payload: JoinEUI + DevEUI + DevNonce
+    auto payload = join_request.marshal();
+
+    std::vector<byte> data;
+    data.reserve(1 + payload.size());
+
+    data.push_back(mhdr);
+    data.insert(data.end(), payload.begin(), payload.end());
+
+    // AES-CMAC using AppKey
+    CryptoPP::SecByteBlock key{CryptoPP::AES::DEFAULT_KEYLENGTH};
+
+    for (size_t i = 0; i < key.size(); ++i) {
+        key[i] = static_cast<CryptoPP::byte>(app_key._value[i]);
+    }
+
+    try {
+        CryptoPP::CMAC<CryptoPP::AES> cmac{
+            key.data(),
+            key.size()
+        };
+
+        cmac.Update(
+            reinterpret_cast<const CryptoPP::byte*>(data.data()),
+            data.size()
+        );
+
+        std::vector<byte> encoded(cmac.DigestSize());
+
+        cmac.Final(
+            reinterpret_cast<CryptoPP::byte*>(encoded.data())
+        );
+
+        if (encoded.size() < 4) {
+            throw std::runtime_error(
+                "lora: Join Request MIC returned less than 4 bytes"
+            );
+        }
+
+        for (int i = 0; i < 4; ++i) {
+            result._value[i] = encoded[i];
+        }
+
+    } catch (const CryptoPP::Exception& ex) {
+        throw std::runtime_error(
+            std::string("lora: failed to calculate Join Request MIC: ") +
+            ex.what()
+        );
+    }
+
+    return result;
+}
+
 void data_payload::unmarshal(const std::vector<byte>& data, bool uplink) {
     _data = data;
 }
 
-std::vector<byte> dev_addr::marshal() {
+std::vector<byte> dev_addr::marshal() const {
     std::vector<byte> res{_value.rbegin(), _value.rend()};
     return res;
 }
@@ -491,6 +643,98 @@ void phy_payload::encrypt_frm_payload(aes128key key) {
     _mac_payload._frm_payload.push_back(std::move(frm_payload));
 }
 
+
+mic phy_payload::calculate_join_accept_mic(
+        const aes128key& app_key,
+        const join_accept_payload& join_accept) {
+
+    mic result{};
+
+    const byte mhdr = 0x20;
+    auto payload = join_accept.marshal();
+
+    std::vector<byte> data;
+    data.reserve(1 + payload.size());
+    data.push_back(mhdr);
+    data.insert(data.end(), payload.begin(), payload.end());
+
+    CryptoPP::SecByteBlock key{CryptoPP::AES::DEFAULT_KEYLENGTH};
+
+    for (size_t i = 0; i < key.size(); ++i) {
+        key[i] = static_cast<CryptoPP::byte>(app_key._value[i]);
+    }
+
+    CryptoPP::CMAC<CryptoPP::AES> cmac{
+        key.data(),
+        key.size()
+    };
+
+    cmac.Update(
+        reinterpret_cast<const CryptoPP::byte*>(data.data()),
+        data.size()
+    );
+
+    std::vector<byte> encoded(cmac.DigestSize());
+    cmac.Final(
+        reinterpret_cast<CryptoPP::byte*>(encoded.data())
+    );
+
+    for (int i = 0; i < 4; ++i) {
+        result._value[i] = encoded[i];
+    }
+
+    return result;
+}
+
+void phy_payload::decrypt_join_accept(const aes128key& app_key) {
+    if (_mhdr._m_type != m_type::join_accept) {
+        throw std::runtime_error(
+            "lora: decrypt_join_accept called for non Join Accept"
+        );
+    }
+
+    if (_encrypted_join_accept.size() != 16 &&
+        _encrypted_join_accept.size() != 32) {
+        throw std::runtime_error(
+            "lora: invalid encrypted Join Accept size"
+        );
+    }
+
+    // En un Join Accept, el dispositivo utiliza AES-128-ECB
+    // ENCRYPTION para descifrar el bloque recibido.
+    CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption encryption;
+
+    encryption.SetKey(
+        reinterpret_cast<const CryptoPP::byte*>(
+            app_key._value.data()
+        ),
+        CryptoPP::AES::DEFAULT_KEYLENGTH
+    );
+
+    std::vector<byte> decrypted(_encrypted_join_accept.size());
+
+    encryption.ProcessData(
+        reinterpret_cast<CryptoPP::byte*>(decrypted.data()),
+        reinterpret_cast<const CryptoPP::byte*>(
+            _encrypted_join_accept.data()
+        ),
+        decrypted.size()
+    );
+
+    // Separar payload y MIC.
+    std::vector<byte> join_accept_data{
+        decrypted.begin(),
+        decrypted.end() - 4
+    };
+
+    _join_accept.unmarshal(join_accept_data);
+
+    for (int i = 0; i < 4; ++i) {
+        _mic._value[i] =
+            decrypted[decrypted.size() - 4 + i];
+    }
+}
+
 void phy_payload::decrypt_frm_payload(aes128key key) {
     encrypt_frm_payload(key);
     if (_mac_payload._f_port && *_mac_payload._f_port == 0) {
@@ -541,8 +785,13 @@ std::vector<byte> phy_payload::marshal() {
     bytes = _mhdr.marshal();
     res.insert(res.end(), bytes.begin(), bytes.end());
 
-    // Marshal MAC payload
-    bytes = _mac_payload.marshal();
+    // Marshal payload according to message type
+    if (_mhdr._m_type == m_type::join_request) {
+        bytes = _join_request.marshal();
+    } else {
+        bytes = _mac_payload.marshal();
+    }
+
     res.insert(res.end(), bytes.begin(), bytes.end());
 
     // Marshal MIC
@@ -565,13 +814,24 @@ void phy_payload::unmarshal(const std::vector<byte>& data) {
     // Unmarshal MAC payload
     bytes = {data.begin() + 1, data.begin() + data.size() - 4};
     switch (_mhdr._m_type) {
-        case m_type::join_request:
-        case m_type::join_accept:
+        case m_type::join_request: {
+            std::cerr << "lora: join request not supported for downlink\n";
+            break;
+        }
+
+        case m_type::join_accept: {
+            _encrypted_join_accept = {
+                data.begin() + 1,
+                data.end()
+            };
+            break;
+        }
         case m_type::rejoin_request:
         case m_type::proprietary: {
             std::cerr << "lora: message type not supported\n";
             break;
         }
+
         default: {
             _mac_payload.unmarshal(bytes, is_uplink());
             break;
@@ -592,8 +852,15 @@ bool phy_payload::is_uplink() {
         case m_type::rejoin_request: {
             return true;
         }
-        default: {
+
+        case m_type::join_accept:
+        case m_type::unconfirmed_data_down:
+        case m_type::confirmed_data_down: {
             return false;
+        }
+
+        default: {
+            throw std::runtime_error("lora: unknown message type");
         }
     }
 }

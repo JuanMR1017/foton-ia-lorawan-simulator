@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#include <atomic>
 
 #include <supg/core/gateway.h>
 
@@ -19,13 +20,20 @@ public:
 
 private:
     void uplink_loop();
+    void send_join_request();
     void send_data();
+    void derive_session_keys(const lora::join_accept_payload& join_accept);
     void send_uplink(lora::phy_payload phy_payload);
     void downlink_loop();
     void handle_data(lora::phy_payload phy_payload);
 
 private:
     lora::eui64 _dev_eui;
+    lora::eui64 _join_eui;
+    lora::aes128key _app_key;
+    std::atomic<bool> _joined{false};
+    uint16_t _dev_nonce = 200;
+    uint16_t _last_dev_nonce = 0;
     size_t _uplink_interval = 10;
     std::vector<byte> _payload;
     uint8_t _f_port = 0;

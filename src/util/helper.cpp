@@ -107,8 +107,8 @@ ssize_t timeout_recvfrom(int fd, char* buf, ssize_t buf_len, const sockaddr_in& 
     if (res == -1 || res == 0) {
         return -1;
     } else {
-        size_t addr_len = 0;
-        return recvfrom(fd, buf, buf_len, MSG_WAITALL, (sockaddr*)&addr, (socklen_t*)&addr_len);
+        socklen_t addr_len = sizeof(sockaddr_in);
+        return recvfrom(fd, buf, buf_len, MSG_WAITALL, (sockaddr*)&addr, &addr_len);
     }
 }
 

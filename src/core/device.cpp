@@ -5,6 +5,8 @@
 #include <supg/core/device.h>
 #include <supg/util/helper.h>
 #include <spdlog/spdlog.h>
+#include <aes.h>
+#include <modes.h>
 
 namespace supg {
 
@@ -34,10 +36,87 @@ void device::add_gateway(std::shared_ptr<gateway> gateway) {
 
 void device::uplink_loop() {
     std::this_thread::sleep_for(5s);
+
+    // Start OTAA join procedure
+    while (!_stopped && !_joined) {
+        send_join_request();
+        std::this_thread::sleep_for(5s);
+    }
+
+    // Send application data only after Join Accept
     while (!_stopped) {
         send_data();
-        std::this_thread::sleep_for(std::chrono::seconds(_uplink_interval));
+        std::this_thread::sleep_for(
+            std::chrono::seconds(_uplink_interval)
+        );
     }
+}
+void device::send_join_request() {
+    lora::phy_payload phy_payload{};
+
+    // MAC header: Join Request
+    phy_payload._mhdr._m_type = lora::m_type::join_request;
+    phy_payload._mhdr._major = lora::major::lorawan_r1;
+
+    // Join Request payload
+    phy_payload._join_request._join_eui = _join_eui;
+    phy_payload._join_request._dev_eui = _dev_eui;
+    phy_payload._join_request._dev_nonce = _dev_nonce;
+
+    // Calculate MIC using AppKey
+    phy_payload._mic =
+        phy_payload.calculate_join_request_mic(
+            _app_key,
+            phy_payload._join_request
+        );
+
+    spdlog::info(
+        "DEV {}: Send OTAA Join Request, DevNonce={}",
+        _dev_eui.string(),
+        _dev_nonce
+    );
+
+    // Send Join Request
+    send_uplink(std::move(phy_payload));
+    _last_dev_nonce = _dev_nonce;
+
+    // DevNonce must change for the next Join Request
+    ++_dev_nonce;
+}
+
+void device::derive_session_keys(const lora::join_accept_payload& join_accept) {
+    std::vector<byte> data(16, 0x00);
+
+    data[0] = 0x01;
+    std::copy(join_accept._app_nonce.begin(), join_accept._app_nonce.end(), data.begin() + 1);
+    std::copy(join_accept._net_id.begin(), join_accept._net_id.end(), data.begin() + 4);
+    data[7] = static_cast<byte>(_last_dev_nonce & 0xFF);
+    data[8] = static_cast<byte>((_last_dev_nonce >> 8) & 0xFF);
+
+    CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption encryption;
+    encryption.SetKey(
+        reinterpret_cast<const CryptoPP::byte*>(_app_key._value.data()),
+        CryptoPP::AES::DEFAULT_KEYLENGTH
+    );
+
+    std::vector<byte> encrypted(16);
+    encryption.ProcessData(
+        reinterpret_cast<CryptoPP::byte*>(encrypted.data()),
+        reinterpret_cast<const CryptoPP::byte*>(data.data()),
+        data.size()
+    );
+
+    std::copy(encrypted.begin(), encrypted.end(), _nwk_s_key._value.begin());
+
+    data[0] = 0x02;
+
+    encryption.ProcessData(
+        reinterpret_cast<CryptoPP::byte*>(encrypted.data()),
+        reinterpret_cast<const CryptoPP::byte*>(data.data()),
+        data.size()
+    );
+
+    std::copy(encrypted.begin(), encrypted.end(), _app_s_key._value.begin());
 }
 
 void device::send_data() {
@@ -104,7 +183,47 @@ void device::downlink_loop() {
             }
             switch (phy_payload._mhdr._m_type) {
                 case lora::m_type::join_accept: {
-                    spdlog::error("DEV {}: Handle unsupported payload", _dev_eui.string());
+                    spdlog::info(
+                        "DEV {}: Received OTAA Join Accept",
+                        _dev_eui.string()
+                    );
+
+                    try {
+                        // Descifrar Join Accept usando AppKey
+                        phy_payload.decrypt_join_accept(_app_key);
+
+                        // Calcular MIC sobre el Join Accept descifrado
+                        auto calculated_mic =
+                            phy_payload.calculate_join_accept_mic(
+                                _app_key,
+                                phy_payload._join_accept
+                            );
+
+                        if (calculated_mic != phy_payload._mic) {
+                            spdlog::error(
+                                "DEV {}: Invalid Join Accept MIC",
+                                _dev_eui.string()
+                            );
+                            break;
+                        }
+
+                        _dev_addr = phy_payload._join_accept._dev_addr;
+                        derive_session_keys(phy_payload._join_accept);
+
+                        spdlog::info(
+                            "DEV {}: Join Accept MIC valid",
+                            _dev_eui.string()
+                        );
+
+                        _joined = true;
+                    } catch (const std::exception& ex) {
+                        spdlog::error(
+                            "DEV {}: Failed to process Join Accept: {}",
+                            _dev_eui.string(),
+                            ex.what()
+                        );
+                    }
+
                     break;
                 }
                 case lora::m_type::unconfirmed_data_down:

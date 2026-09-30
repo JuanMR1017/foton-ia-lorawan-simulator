@@ -10,14 +10,13 @@ port = 1700
 duration = 60
 
 [simulator.device]
-first_eui = "0000000000000000"
-first_address = "00000000"
-first_network_session_key = "00000000000000000000000000000000"
-first_application_session_key = "00000000000000000000000000000000"
+first_eui = "0000000000000001"
+first_join_eui = "0000000000000000"
+first_app_key = "00000000000000000000000000000000"
 count = 1
 uplink_interval = 10
 f_port = 10
-payload = "test_packet_1234"
+payload = "T:24.7,H:68.3"
 frequency = 915200000
 bandwidth = 125
 spreading_factor = 7

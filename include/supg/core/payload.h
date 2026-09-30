@@ -13,7 +13,7 @@ namespace lora {
 // Data payload
 
 struct eui64 {
-    std::vector<byte> marshal();
+    std::vector<byte> marshal() const;
     void unmarshal(const std::vector<byte>& data);
     std::basic_string<byte> string();
     bool operator<(const eui64& rhs) const;
@@ -26,12 +26,37 @@ struct data_payload {
     std::vector<byte> _data;
 };
 
+// LoRaWAN OTAA Join Request
+
+struct join_request_payload {
+    std::vector<byte> marshal() const;
+
+    eui64 _join_eui;
+    eui64 _dev_eui;
+    uint16_t _dev_nonce;
+};
+
 // MAC payload
 
 struct dev_addr {
-    std::vector<byte> marshal();
+    std::vector<byte> marshal() const;
     void unmarshal(const std::vector<byte>& data);
     std::array<byte, 4> _value;
+};
+
+// LoRaWAN OTAA Join Accept
+
+struct join_accept_payload {
+    std::vector<byte> marshal() const;
+    void unmarshal(const std::vector<byte>& data);
+
+    std::array<byte, 3> _app_nonce;
+    std::array<byte, 3> _net_id;
+    dev_addr _dev_addr;
+    uint8_t _dl_settings;
+    uint8_t _rx_delay;
+    std::array<byte, 16> _cf_list;
+    bool _has_cf_list = false;
 };
 
 struct f_ctrl {
@@ -125,6 +150,10 @@ struct phy_payload {
         std::vector<byte> _data;
     };
 
+    // For OTAA Join Request
+    mic calculate_join_request_mic(const aes128key& app_key,
+                               const join_request_payload& join_request);
+
     // For uplink data frame
     void set_uplink_data_mic(uplink_data_info& info);
     bool validate_uplink_data_mic(uplink_data_info& info);
@@ -141,6 +170,13 @@ struct phy_payload {
     void decrypt_frm_payload(aes128key key);
     std::vector<byte> encrypt_frm_payload(frm_payload_info& info);
 
+    // For OTAA Join Accept
+    void decrypt_join_accept(const aes128key& app_key);
+    mic calculate_join_accept_mic(
+        const aes128key& app_key,
+        const join_accept_payload& join_accept
+    );
+
     // For physical payload
     std::vector<byte> marshal();
     void unmarshal(const std::vector<byte>& data);
@@ -148,7 +184,11 @@ struct phy_payload {
 
     mhdr _mhdr;
     mac_payload _mac_payload;
+    join_request_payload _join_request;
+    join_accept_payload _join_accept;
     mic _mic;
+
+    std::vector<byte> _encrypted_join_accept;
 };
 
 }
