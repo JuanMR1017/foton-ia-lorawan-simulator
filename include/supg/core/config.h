@@ -17,6 +17,7 @@ struct config {
     std::string _first_dev_eui = "0000000000000001";
     std::string _first_join_eui = "0000000000000000";
     std::string _first_app_key = "00000000000000000000000000000000";
+    int _first_dev_nonce = 200;
     int _duration = 60;
     int _dev_count = 1;
     int _uplink_interval = 10;

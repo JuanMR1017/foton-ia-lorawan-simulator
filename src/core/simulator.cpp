@@ -34,6 +34,7 @@ void simulator::generate_config_file(const std::string& config_file) {
     ofs << "first_eui = " << R"(")" << _config._first_dev_eui << R"(")" << '\n';
     ofs << "first_join_eui = " << R"(")" << _config._first_join_eui << R"(")" << '\n';
     ofs << "first_app_key = " << R"(")" << _config._first_app_key << R"(")" << '\n';
+    ofs << "first_dev_nonce = " << _config._first_dev_nonce << '\n';
     ofs << "count = " << _config._dev_count << '\n';
     ofs << "uplink_interval = " << _config._uplink_interval << '\n';
     ofs << "f_port = " << _config._f_port << '\n';
@@ -137,6 +138,14 @@ void simulator::init() {
             throw std::runtime_error("Config: Invalid AppKey");
         }
     }
+
+    val = config.find("simulator.device.first_dev_nonce");
+    if (val && val->is<int>()) {
+        _config._first_dev_nonce = val->as<int>();
+        if (_config._first_dev_nonce < 0 || _config._first_dev_nonce > 65535) {
+            throw std::runtime_error("Config: Invalid DevNonce");
+        }
+    }
     val = config.find("simulator.device.count");
     if (val && val->is<int>()) {
         _config._dev_count = val->as<int>();
@@ -144,6 +153,11 @@ void simulator::init() {
             throw std::runtime_error("Config: Invalid device count");
         }
     }
+
+    if (_config._first_dev_nonce + _config._dev_count - 1 > 65535) {
+        throw std::runtime_error("Config: DevNonce range exceeds 65535");
+    }
+
     val = config.find("simulator.device.uplink_interval");
     if (val && val->is<int>()) {
         _config._uplink_interval = val->as<int>();
@@ -260,6 +274,8 @@ void simulator::init() {
     auto app_key_lsb = from_hex_string_to<uint64_t>(_config._first_app_key.substr(16, 16));
     for (int i = 0; i < _config._dev_count; ++i, ++dev_eui) {
         auto dev = std::make_shared<device>();
+        dev->_dev_nonce = static_cast<uint16_t>(_config._first_dev_nonce + i);
+
 
         // Set device EUI
         auto buf = to_hex_string(dev_eui);
